@@ -257,7 +257,7 @@ function App() {
   };
 
   // Archive/Unarchive note
-  const handleArchive = async (id: number) => {
+  const _handleArchive = async (id: number) => {
     try {
       if (showArchive) {
         // Unarchive

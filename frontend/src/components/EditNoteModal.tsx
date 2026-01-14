@@ -31,7 +31,7 @@ export function EditNoteModal({ isOpen, onClose, categories, onAdd, onEdit, mode
       setContent(initialNote.content || '');
       setListItems(initialNote.listItems || []);
       setColor(initialNote.color || NOTE_COLORS[0]);
-      setCategoryId(initialNote.categoryId);
+      setCategoryId(initialNote.categoryId ?? undefined);
     } else if (mode === 'create') {
       // Reset form for create mode
       setNoteType('text');

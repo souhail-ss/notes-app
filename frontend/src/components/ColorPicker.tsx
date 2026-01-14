@@ -15,7 +15,7 @@ interface ColorPickerProps {
   currentColor: string;
   onColorSelect: (color: string) => void;
   onClose: () => void;
-  anchorRef: React.RefObject<HTMLElement>;
+  anchorRef: React.RefObject<HTMLElement | null>;
 }
 
 export function ColorPicker({ currentColor, onColorSelect, onClose, anchorRef }: ColorPickerProps) {

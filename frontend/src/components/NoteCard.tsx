@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Pin, Trash2, CheckSquare, Palette, Copy } from 'lucide-react';
+import { Pin, Trash2, Palette, Copy } from 'lucide-react';
 import { IoCheckmarkCircle } from "react-icons/io5";
 import type { Note } from '../types';
 import { ListNoteCard } from './ListNoteCard';
