@@ -256,24 +256,6 @@ function App() {
     }
   };
 
-  // Archive/Unarchive note
-  const _handleArchive = async (id: number) => {
-    try {
-      if (showArchive) {
-        // Unarchive
-        const updated = await notesApi.unarchive(id);
-        setArchivedNotes((prev) => prev.filter((note) => note.id !== id));
-        setNotes((prev) => [updated, ...prev]);
-      } else {
-        // Archive
-        await notesApi.archive(id);
-        setNotes((prev) => prev.filter((note) => note.id !== id));
-      }
-    } catch (error) {
-      console.error('Failed to archive note:', error);
-    }
-  };
-
   // Multi-select handlers
   const handleSelectNote = (id: number) => {
     if (!multiSelectMode) {
