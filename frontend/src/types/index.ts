@@ -50,6 +50,19 @@ export interface UpdateNoteDto {
   categoryId?: number;
 }
 
+export interface VoiceCommandResult {
+  action: string;
+  type: 'text' | 'list';
+  title: string;
+  content?: string;
+  items?: string[];
+  color?: string;
+  category?: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export type VoiceState = 'idle' | 'listening' | 'processing' | 'confirming' | 'error';
+
 export const NOTE_COLORS = [
   'transparent',  // No color (default)
   '#77172e',      // Dark Red

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Note, Category, CreateNoteDto, UpdateNoteDto } from '../types';
+import type { Note, Category, CreateNoteDto, UpdateNoteDto, VoiceCommandResult } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:3000`;
 
@@ -84,6 +84,14 @@ export const notesApi = {
 
   bulkArchive: async (ids: number[]): Promise<void> => {
     await api.patch('/notes/bulk/archive', { ids });
+  },
+};
+
+// Voice API
+export const voiceApi = {
+  parse: async (transcription: string): Promise<VoiceCommandResult> => {
+    const response = await api.post('/voice/parse', { transcription });
+    return response.data;
   },
 };
 

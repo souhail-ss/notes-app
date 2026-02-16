@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
-import { X, Plus, Trash2 } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { X, Plus, Trash2, Mic, MicOff, Loader } from 'lucide-react';
 import { NOTE_COLORS } from '../types';
-import type { Category, CreateNoteDto, UpdateNoteDto, NoteType, ListItem, Note } from '../types';
+import type { Category, CreateNoteDto, UpdateNoteDto, NoteType, ListItem, Note, VoiceState } from '../types';
+import { voiceApi } from '../services/api';
 
 interface EditNoteModalProps {
   isOpen: boolean;
@@ -22,6 +23,14 @@ export function EditNoteModal({ isOpen, onClose, categories, onAdd, onEdit, mode
   const [color, setColor] = useState(NOTE_COLORS[0]);
   const [categoryId, setCategoryId] = useState<number | undefined>(undefined);
   const [isClosing, setIsClosing] = useState(false);
+
+  // Voice state
+  const [voiceState, setVoiceState] = useState<VoiceState>('idle');
+  const [transcription, setTranscription] = useState('');
+  const [voiceError, setVoiceError] = useState('');
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const transcriptionRef = useRef('');
+  const stoppedByUserRef = useRef(false);
 
   // Populate form when editing
   useEffect(() => {
@@ -44,6 +53,23 @@ export function EditNoteModal({ isOpen, onClose, categories, onAdd, onEdit, mode
     }
   }, [mode, initialNote]);
 
+  // Reset voice state when modal opens/closes
+  useEffect(() => {
+    if (!isOpen) {
+      stopRecognition();
+      setVoiceState('idle');
+      setTranscription('');
+      setVoiceError('');
+    }
+  }, [isOpen]);
+
+  // Cleanup recognition on unmount
+  useEffect(() => {
+    return () => {
+      stopRecognition();
+    };
+  }, []);
+
   // Handle ESC key
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -56,12 +82,200 @@ export function EditNoteModal({ isOpen, onClose, categories, onAdd, onEdit, mode
     return () => window.removeEventListener('keydown', handleEsc);
   }, [isOpen]);
 
+  const stopRecognition = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.onend = null;
+      recognitionRef.current.onresult = null;
+      recognitionRef.current.onerror = null;
+      recognitionRef.current.abort();
+      recognitionRef.current = null;
+    }
+  };
+
+  const handleVoiceToggle = async () => {
+    if (voiceState === 'listening') {
+      // Stop listening and process
+      stoppedByUserRef.current = true;
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      return;
+    }
+
+    if (voiceState === 'processing') return;
+
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) {
+      setVoiceState('error');
+      setVoiceError('Speech recognition is not supported in this browser. Please use Chrome.');
+      return;
+    }
+
+    // Request microphone permission first
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Stop the stream immediately — we just needed the permission
+      stream.getTracks().forEach(track => track.stop());
+    } catch {
+      setVoiceState('error');
+      setVoiceError('Microphone access denied. Please allow microphone permission in your browser settings.');
+      return;
+    }
+
+    // Start listening
+    setVoiceState('listening');
+    setTranscription('');
+    setVoiceError('');
+    transcriptionRef.current = '';
+    stoppedByUserRef.current = false;
+
+    const recognition = new SpeechRecognitionAPI();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let fullTranscript = '';
+
+      for (let i = 0; i < event.results.length; i++) {
+        fullTranscript += event.results[i][0].transcript;
+      }
+
+      transcriptionRef.current = fullTranscript;
+      setTranscription(fullTranscript);
+    };
+
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      console.error('Speech recognition error:', event.error);
+      if (event.error === 'no-speech') {
+        setVoiceError('No speech detected. Please try again.');
+      } else if (event.error === 'not-allowed' || event.error === 'audio-capture') {
+        setVoiceError('Microphone access denied. Please allow microphone permission in your browser settings.');
+      } else if (event.error === 'aborted') {
+        // Ignore aborted — user or code stopped it
+        return;
+      } else {
+        setVoiceError(`Speech recognition error: ${event.error}`);
+      }
+      setVoiceState('error');
+      recognitionRef.current = null;
+    };
+
+    recognition.onend = () => {
+      if (stoppedByUserRef.current) {
+        // User clicked stop — process the transcription
+        recognitionRef.current = null;
+        const finalText = transcriptionRef.current;
+        if (finalText.trim()) {
+          processTranscription(finalText.trim());
+        } else {
+          setVoiceState('idle');
+        }
+      } else {
+        // Recognition ended on its own (silence/timeout) — restart it
+        try {
+          recognition.start();
+        } catch {
+          recognitionRef.current = null;
+          setVoiceState('idle');
+        }
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  const processTranscription = async (text: string) => {
+    setVoiceState('processing');
+    try {
+      const result = await voiceApi.parse(text);
+
+      // Auto-fill form fields from parsed result
+      setTitle(result.title);
+      if (result.type === 'list' && result.items) {
+        setNoteType('list');
+        setListItems(
+          result.items.map((item, i) => ({
+            id: `voice-${Date.now()}-${i}`,
+            text: item,
+            completed: false,
+          }))
+        );
+        setContent('');
+      } else {
+        setNoteType('text');
+        setContent(result.content || '');
+        setListItems([]);
+      }
+
+      // Map color name to closest NOTE_COLORS hex value
+      if (result.color) {
+        const colorMap: Record<string, string> = {
+          // Red family → Dark Red (#77172e)
+          red: NOTE_COLORS[1],
+          pink: NOTE_COLORS[1],
+          rose: NOTE_COLORS[1],
+          crimson: NOTE_COLORS[1],
+          maroon: NOTE_COLORS[1],
+          // Brown/Yellow/Orange family → Dark Brown (#7c4a06)
+          brown: NOTE_COLORS[2],
+          yellow: NOTE_COLORS[2],
+          orange: NOTE_COLORS[2],
+          gold: NOTE_COLORS[2],
+          amber: NOTE_COLORS[2],
+          tan: NOTE_COLORS[2],
+          beige: NOTE_COLORS[2],
+          // Green family → Dark Green (#264d3b)
+          green: NOTE_COLORS[3],
+          lime: NOTE_COLORS[3],
+          olive: NOTE_COLORS[3],
+          mint: NOTE_COLORS[3],
+          forest: NOTE_COLORS[3],
+          emerald: NOTE_COLORS[3],
+          teal: NOTE_COLORS[3],
+          // Blue family → Dark Blue (#256377)
+          blue: NOTE_COLORS[4],
+          cyan: NOTE_COLORS[4],
+          navy: NOTE_COLORS[4],
+          sky: NOTE_COLORS[4],
+          aqua: NOTE_COLORS[4],
+          turquoise: NOTE_COLORS[4],
+          // Purple family → Dark Purple (#472f5b)
+          purple: NOTE_COLORS[5],
+          violet: NOTE_COLORS[5],
+          indigo: NOTE_COLORS[5],
+          lavender: NOTE_COLORS[5],
+          magenta: NOTE_COLORS[5],
+          plum: NOTE_COLORS[5],
+        };
+        const mapped = colorMap[result.color.toLowerCase()];
+        if (mapped) setColor(mapped);
+      }
+
+      // Match category name to existing categories
+      if (result.category) {
+        const match = categories.find(
+          c => c.name.toLowerCase() === result.category!.toLowerCase()
+        );
+        if (match) setCategoryId(match.id);
+      }
+
+      setVoiceState('idle');
+      setTranscription('');
+    } catch (error) {
+      console.error('Voice parsing error:', error);
+      setVoiceState('error');
+      setVoiceError('Failed to parse voice command. Please try again.');
+    }
+  };
+
   const handleClose = () => {
     setIsClosing(true);
     setTimeout(() => {
       setIsClosing(false);
       onClose();
-    }, 200); // Match animation duration
+    }, 200);
   };
 
   const handleBackdropClick = (e: React.MouseEvent) => {
@@ -172,8 +386,8 @@ export function EditNoteModal({ isOpen, onClose, categories, onAdd, onEdit, mode
         </div>
 
         <div className="modal-body">
-          {/* Type Selector Tabs */}
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+          {/* Type Selector Tabs + Voice Button */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', borderBottom: '1px solid var(--border)', paddingBottom: '8px', alignItems: 'center' }}>
             <button
               type="button"
               onClick={() => setNoteType('text')}
@@ -208,7 +422,70 @@ export function EditNoteModal({ isOpen, onClose, categories, onAdd, onEdit, mode
             >
               Create list
             </button>
+
+            {/* Voice Button */}
+            {mode === 'create' && (
+              <button
+                type="button"
+                className={`voice-mic-btn ${voiceState === 'listening' ? 'listening' : ''}`}
+                onClick={handleVoiceToggle}
+                disabled={voiceState === 'processing'}
+                title={voiceState === 'listening' ? 'Stop recording' : 'Voice command'}
+                style={{ marginLeft: 'auto' }}
+              >
+                {voiceState === 'processing' ? (
+                  <Loader size={18} className="voice-spinner" />
+                ) : voiceState === 'listening' ? (
+                  <MicOff size={18} />
+                ) : (
+                  <Mic size={18} />
+                )}
+              </button>
+            )}
           </div>
+
+          {/* Voice Status Area */}
+          {voiceState === 'listening' && (
+            <div className="voice-status">
+              <div className="voice-listening-indicator">
+                <span className="voice-dot"></span>
+                Listening...
+              </div>
+              {transcription && (
+                <p className="voice-transcription">"{transcription}"</p>
+              )}
+            </div>
+          )}
+
+          {voiceState === 'processing' && (
+            <div className="voice-status">
+              <div className="voice-processing-indicator">
+                <Loader size={16} className="voice-spinner" />
+                Processing voice command...
+              </div>
+            </div>
+          )}
+
+          {voiceState === 'error' && (
+            <div className="voice-status voice-error">
+              <p>{voiceError}</p>
+              <button
+                type="button"
+                onClick={() => { setVoiceState('idle'); setVoiceError(''); }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--primary)',
+                  cursor: 'pointer',
+                  fontSize: '0.8125rem',
+                  fontWeight: 500,
+                  padding: '4px 0',
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
 
           <form className="add-note-form-modal" onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
             <input

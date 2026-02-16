@@ -1,12 +1,15 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotesModule } from './notes/notes.module';
 import { CategoriesModule } from './categories/categories.module';
+import { VoiceModule } from './voice/voice.module';
 import { Note } from './notes/note.entity';
 import { Category } from './categories/category.entity';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRoot(
       process.env.DATABASE_URL
         ? {
@@ -27,6 +30,7 @@ import { Category } from './categories/category.entity';
     ),
     NotesModule,
     CategoriesModule,
+    VoiceModule,
   ],
   controllers: [],
   providers: [],
