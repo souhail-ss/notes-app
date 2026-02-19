@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
 import { Category } from '../categories/category.entity';
+import { User } from '../users/user.entity';
 
 @Entity()
 export class Note {
@@ -30,9 +31,9 @@ export class Note {
   @Column({ default: 0 })
   order: number;
 
-  @ManyToOne(() => Category, (category) => category.notes, { 
+  @ManyToOne(() => Category, (category) => category.notes, {
     nullable: true,
-    onDelete: 'SET NULL' 
+    onDelete: 'SET NULL'
   })
   category: Category;
 
@@ -44,4 +45,13 @@ export class Note {
 
   @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   updatedAt: Date;
+
+  @ManyToOne(() => User, (user) => user.notes, {
+    nullable: true,
+    onDelete: 'CASCADE',
+  })
+  user: User;
+
+  @Column({ nullable: true })
+  userId: number;
 }

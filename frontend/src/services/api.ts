@@ -10,6 +10,31 @@ const api = axios.create({
   },
 });
 
+// Add auth token to every request
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Handle 401 responses (expired/invalid token)
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      const hadToken = !!localStorage.getItem('token');
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      if (hadToken) {
+        window.location.reload();
+      }
+    }
+    return Promise.reject(error);
+  },
+);
+
 // Notes API
 export const notesApi = {
   getAll: async (categoryId?: number): Promise<Note[]> => {

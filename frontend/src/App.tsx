@@ -5,10 +5,13 @@ import { FAB } from './components/FAB';
 import { EditNoteModal } from './components/EditNoteModal';
 import { NotesGrid } from './components/NotesGrid';
 import { notesApi, categoriesApi } from './services/api';
+import { useAuth } from './services/AuthContext';
+import LoginPage from './components/LoginPage';
 import type { Note, Category, CreateNoteDto, UpdateNoteDto } from './types';
 import './index.css';
 
 function App() {
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [notes, setNotes] = useState<Note[]>([]);
   const [archivedNotes, setArchivedNotes] = useState<Note[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -46,6 +49,11 @@ function App() {
 
   // Fetch all data
   const fetchData = useCallback(async () => {
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
+
     try {
       console.log('[fetchData] selectedCategory:', selectedCategory);
       if (showArchive) {
@@ -70,7 +78,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [selectedCategory, showArchive]);
+  }, [selectedCategory, showArchive, isAuthenticated]);
 
   useEffect(() => {
     fetchData();
@@ -132,7 +140,6 @@ function App() {
     console.group(`[App.handlePin] Note ID: ${id}, isPinned: ${isPinned}`);
 
     try {
-      // Log current state
       const currentNote = notes.find(n => n.id === id);
       console.log('[handlePin] Current note:', {
         id: currentNote?.id,
@@ -154,20 +161,10 @@ function App() {
         isPinned: updated.isPinned,
       });
 
-      // Validate response
       if (!updated.content && currentNote?.type === 'text') {
-        console.error('[handlePin] ⚠️ WARNING: content is missing!');
+        console.error('[handlePin] WARNING: content is missing!');
       }
 
-      if (!updated.type) {
-        console.error('[handlePin] ⚠️ WARNING: type is missing!');
-      }
-
-      if (!updated.color) {
-        console.error('[handlePin] ⚠️ WARNING: color is missing!');
-      }
-
-      // Apply defensive fallbacks (keep these until backend fix is confirmed)
       if (!updated.color) {
         console.warn('[handlePin] Applying fallback: color = transparent');
         updated.color = 'transparent';
@@ -183,9 +180,9 @@ function App() {
         prev.map((note) => (note.id === id ? updated : note))
       );
 
-      console.log('[handlePin] ✓ Complete');
+      console.log('[handlePin] Complete');
     } catch (error) {
-      console.error('[handlePin] ✗ Failed:', error);
+      console.error('[handlePin] Failed:', error);
     } finally {
       console.groupEnd();
     }
@@ -244,7 +241,7 @@ function App() {
     }
   };
 
-  // Color change - now receives the selected color from ColorPicker
+  // Color change
   const handleColorChange = async (id: number, color: string) => {
     try {
       const updated = await notesApi.update(id, { color });
@@ -267,7 +264,6 @@ function App() {
           ? prev.filter((noteId) => noteId !== id)
           : [...prev, id];
 
-        // Exit multi-select mode if no notes are selected
         if (newSelection.length === 0) {
           setMultiSelectMode(false);
         }
@@ -310,7 +306,6 @@ function App() {
 
   // Reorder note
   const handleReorder = async (noteId: number, newOrder: number, isPinned: boolean) => {
-    // Optimistic update - immediately update UI
     const previousNotes = notes;
 
     setNotes((prev) =>
@@ -320,22 +315,18 @@ function App() {
     );
 
     try {
-      // Get all notes in the same section
       const notesInSection = notes
         .filter((n) => n.isPinned === isPinned)
         .map((n) => (n.id === noteId ? { ...n, order: newOrder } : n))
         .sort((a, b) => a.order - b.order);
 
-      // Reindex to prevent fractional accumulation (0, 1, 2, 3...)
       const reindexedNotes = notesInSection.map((note, index) => ({
         id: note.id,
         order: index,
       }));
 
-      // Call backend API
       await notesApi.reorder(reindexedNotes);
 
-      // Update state with clean indexes
       setNotes((prev) =>
         prev.map((note) => {
           const reindexed = reindexedNotes.find((r) => r.id === note.id);
@@ -344,7 +335,6 @@ function App() {
       );
     } catch (error) {
       console.error('Failed to reorder note:', error);
-      // Rollback on error
       setNotes(previousNotes);
     }
   };
@@ -352,7 +342,6 @@ function App() {
   // Filter notes
   const displayNotes = showArchive ? archivedNotes : notes;
   const filteredNotes = displayNotes.filter((note) => {
-    // Search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       const contentMatch = note.content?.toLowerCase().includes(query) || false;
@@ -369,7 +358,6 @@ function App() {
       }
     }
 
-    // Pinned filter
     if (showPinned && !note.isPinned) {
       return false;
     }
@@ -382,30 +370,44 @@ function App() {
     setSelectedCategory(categoryId);
     setShowPinned(false);
     setShowArchive(false);
-    setSidebarOpen(false); // Close sidebar on mobile after selection
+    setSidebarOpen(false);
   };
 
   const handleTogglePinned = () => {
     setShowPinned(!showPinned);
     setSelectedCategory(null);
     setShowArchive(false);
-    setSidebarOpen(false); // Close sidebar on mobile after selection
+    setSidebarOpen(false);
   };
 
   const handleToggleArchive = () => {
     setShowArchive(!showArchive);
     setSelectedCategory(null);
     setShowPinned(false);
-    setSidebarOpen(false); // Close sidebar on mobile after selection
+    setSidebarOpen(false);
   };
+
+  // Show loading spinner while checking auth
+  if (authLoading) {
+    return (
+      <div className="auth-loading">
+        <div className="auth-loading-spinner"></div>
+      </div>
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
 
   if (loading) {
     return (
       <div className="app">
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
           height: '100vh',
           width: '100%'
         }}>
@@ -418,11 +420,11 @@ function App() {
   return (
     <div className="app">
       {/* Mobile overlay */}
-      <div 
+      <div
         className={`sidebar-overlay ${sidebarOpen ? 'visible' : ''}`}
         onClick={handleCloseSidebar}
       />
-      
+
       <Sidebar
         categories={categories}
         selectedCategory={selectedCategory}
@@ -433,7 +435,7 @@ function App() {
         onToggleArchive={handleToggleArchive}
         isOpen={sidebarOpen}
       />
-      
+
       <main className="main-content">
         <Header
           searchQuery={searchQuery}

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Note } from './note.entity';
@@ -13,120 +13,116 @@ export class NotesService {
     private notesRepository: Repository<Note>,
   ) {}
 
-  async findAll(): Promise<Note[]> {
+  async findAll(userId: number): Promise<Note[]> {
     return this.notesRepository.find({
-      where: { isArchived: false },
+      where: { userId, isArchived: false },
       relations: ['category'],
       order: { isPinned: 'DESC', order: 'ASC', createdAt: 'DESC' },
     });
   }
 
-  async findByCategory(categoryId: number): Promise<Note[]> {
+  async findByCategory(categoryId: number, userId: number): Promise<Note[]> {
     return this.notesRepository.find({
-      where: { categoryId, isArchived: false },
+      where: { categoryId, userId, isArchived: false },
       relations: ['category'],
       order: { isPinned: 'DESC', order: 'ASC', createdAt: 'DESC' },
     });
   }
 
-  async findPinned(): Promise<Note[]> {
+  async findPinned(userId: number): Promise<Note[]> {
     return this.notesRepository.find({
-      where: { isPinned: true, isArchived: false },
+      where: { isPinned: true, isArchived: false, userId },
       relations: ['category'],
       order: { order: 'ASC', createdAt: 'DESC' },
     });
   }
 
-  async create(createNoteDto: CreateNoteDto): Promise<Note> {
-    // Get the max order and set new note to be at the end
+  async create(createNoteDto: CreateNoteDto, userId: number): Promise<Note> {
     const maxOrder = await this.notesRepository
       .createQueryBuilder('note')
+      .where('note.userId = :userId', { userId })
       .select('MAX(note.order)', 'max')
       .getRawOne();
-    
+
     const note = this.notesRepository.create({
       ...createNoteDto,
+      userId,
       order: (maxOrder?.max || 0) + 1,
     });
     return this.notesRepository.save(note);
   }
 
-  async update(id: number, updateNoteDto: UpdateNoteDto): Promise<Note> {
+  async update(id: number, updateNoteDto: UpdateNoteDto, userId: number): Promise<Note> {
     this.logger.log(`[UPDATE] Starting update for note ID: ${id}`);
-    this.logger.debug(`[UPDATE] Payload: ${JSON.stringify(updateNoteDto)}`);
 
-    // Fetch existing note
     const note = await this.notesRepository.findOne({
-      where: { id },
+      where: { id, userId },
       relations: ['category']
     });
 
     if (!note) {
-      this.logger.error(`[UPDATE] Note with ID ${id} not found`);
+      this.logger.error(`[UPDATE] Note with ID ${id} not found or access denied`);
       throw new NotFoundException(`Note with ID ${id} not found`);
     }
 
-    this.logger.debug(`[UPDATE] Before update: title="${note.title}", content="${note.content?.substring(0, 50)}...", isPinned=${note.isPinned}`);
-
-    // Apply updates
     Object.assign(note, updateNoteDto);
     note.updatedAt = new Date();
 
-    this.logger.debug(`[UPDATE] After merge: isPinned=${note.isPinned}`);
+    await this.notesRepository.save(note);
 
-    // Save to database
-    const savedNote = await this.notesRepository.save(note);
-    this.logger.debug(`[UPDATE] After save: hasContent=${!!savedNote.content}, contentLength=${savedNote.content?.length || 0}`);
-
-    // CRITICAL FIX: Reload from database to ensure all fields
-    this.logger.log(`[UPDATE] Reloading note to ensure completeness...`);
     const reloadedNote = await this.notesRepository.findOne({
-      where: { id },
+      where: { id, userId },
       relations: ['category']
     });
 
     if (!reloadedNote) {
-      this.logger.error(`[UPDATE] Failed to reload note ID ${id}`);
       throw new NotFoundException(`Failed to reload note with ID ${id}`);
     }
 
-    this.logger.log(`[UPDATE] Complete - returning note with content: ${!!reloadedNote.content}`);
+    this.logger.log(`[UPDATE] Complete`);
     return reloadedNote;
   }
 
-  async reorder(reorderDto: ReorderNotesDto): Promise<void> {
+  async reorder(reorderDto: ReorderNotesDto, userId: number): Promise<void> {
+    for (const { id } of reorderDto.notes) {
+      const note = await this.notesRepository.findOne({ where: { id, userId } });
+      if (!note) {
+        throw new ForbiddenException(`Note ${id} not found or access denied`);
+      }
+    }
+
     const updates = reorderDto.notes.map(({ id, order }) =>
-      this.notesRepository.update(id, { order }),
+      this.notesRepository.update({ id, userId }, { order }),
     );
     await Promise.all(updates);
   }
 
-  async remove(id: number): Promise<void> {
-    const result = await this.notesRepository.delete(id);
+  async remove(id: number, userId: number): Promise<void> {
+    const result = await this.notesRepository.delete({ id, userId });
     if (result.affected === 0) {
       throw new NotFoundException(`Note with ID ${id} not found`);
     }
   }
 
-  async findArchived(): Promise<Note[]> {
+  async findArchived(userId: number): Promise<Note[]> {
     return this.notesRepository.find({
-      where: { isArchived: true },
+      where: { isArchived: true, userId },
       relations: ['category'],
       order: { updatedAt: 'DESC' },
     });
   }
 
-  async archive(id: number): Promise<Note> {
-    return this.update(id, { isArchived: true });
+  async archive(id: number, userId: number): Promise<Note> {
+    return this.update(id, { isArchived: true }, userId);
   }
 
-  async unarchive(id: number): Promise<Note> {
-    return this.update(id, { isArchived: false });
+  async unarchive(id: number, userId: number): Promise<Note> {
+    return this.update(id, { isArchived: false }, userId);
   }
 
-  async duplicate(id: number): Promise<Note> {
+  async duplicate(id: number, userId: number): Promise<Note> {
     const original = await this.notesRepository.findOne({
-      where: { id },
+      where: { id, userId },
       relations: ['category']
     });
 
@@ -134,7 +130,7 @@ export class NotesService {
       throw new NotFoundException(`Note with ID ${id} not found`);
     }
 
-    const maxOrder = await this.getMaxOrder();
+    const maxOrder = await this.getMaxOrder(userId);
 
     const duplicate = this.notesRepository.create({
       title: `${original.title} (Copy)`,
@@ -143,6 +139,7 @@ export class NotesService {
       listItems: original.listItems ? JSON.parse(JSON.stringify(original.listItems)) : null,
       color: original.color,
       categoryId: original.categoryId,
+      userId,
       isPinned: false,
       isArchived: false,
       order: maxOrder + 1,
@@ -151,17 +148,22 @@ export class NotesService {
     return this.notesRepository.save(duplicate);
   }
 
-  async bulkDelete(dto: BulkOperationDto): Promise<void> {
-    await this.notesRepository.delete(dto.ids);
+  async bulkDelete(dto: BulkOperationDto, userId: number): Promise<void> {
+    for (const id of dto.ids) {
+      await this.notesRepository.delete({ id, userId });
+    }
   }
 
-  async bulkArchive(dto: BulkOperationDto): Promise<void> {
-    await this.notesRepository.update(dto.ids, { isArchived: true });
+  async bulkArchive(dto: BulkOperationDto, userId: number): Promise<void> {
+    for (const id of dto.ids) {
+      await this.notesRepository.update({ id, userId }, { isArchived: true });
+    }
   }
 
-  private async getMaxOrder(): Promise<number> {
+  private async getMaxOrder(userId: number): Promise<number> {
     const maxOrder = await this.notesRepository
       .createQueryBuilder('note')
+      .where('note.userId = :userId', { userId })
       .select('MAX(note.order)', 'max')
       .getRawOne();
 
