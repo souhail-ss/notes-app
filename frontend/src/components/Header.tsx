@@ -1,4 +1,6 @@
-import { Search, Menu, Sun, Moon, X } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Search, Menu, Sun, Moon, X, LogOut, Settings, User } from 'lucide-react';
+import { useAuth } from '../services/AuthContext';
 
 interface HeaderProps {
   searchQuery: string;
@@ -8,19 +10,39 @@ interface HeaderProps {
   onToggleTheme: () => void;
 }
 
-export function Header({ 
-  searchQuery, 
-  onSearchChange, 
+export function Header({
+  searchQuery,
+  onSearchChange,
   onMenuClick,
   theme,
-  onToggleTheme 
+  onToggleTheme
 }: HeaderProps) {
-  // Mock user for now
-  const user = {
-    name: 'John Doe',
-    email: 'john@example.com',
-    avatar: 'JD'
+  const { user, logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+
+    if (menuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [menuOpen]);
+
+  const getInitials = (name: string | null, email: string) => {
+    if (name) {
+      return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    }
+    return email[0].toUpperCase();
   };
+
+  const initials = user ? getInitials(user.name, user.email) : '?';
 
   return (
     <header className="header">
@@ -65,8 +87,51 @@ export function Header({
           {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
         </button>
 
-        <div className="user-avatar" title={user.name}>
-          {user.avatar}
+        <div className="user-menu-container" ref={menuRef}>
+          <button
+            className="user-avatar"
+            onClick={() => setMenuOpen(!menuOpen)}
+            title={user?.name || user?.email || 'Account'}
+          >
+            {initials}
+          </button>
+
+          {menuOpen && (
+            <div className="user-dropdown">
+              <div className="user-dropdown-header">
+                <div className="user-dropdown-avatar">{initials}</div>
+                <div className="user-dropdown-info">
+                  {user?.name && <span className="user-dropdown-name">{user.name}</span>}
+                  <span className="user-dropdown-email">{user?.email}</span>
+                </div>
+              </div>
+
+              <div className="user-dropdown-divider"></div>
+
+              <button className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
+                <User size={16} />
+                <span>Profile</span>
+              </button>
+
+              <button className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
+                <Settings size={16} />
+                <span>Settings</span>
+              </button>
+
+              <div className="user-dropdown-divider"></div>
+
+              <button
+                className="user-dropdown-item user-dropdown-logout"
+                onClick={() => {
+                  setMenuOpen(false);
+                  logout();
+                }}
+              >
+                <LogOut size={16} />
+                <span>Sign out</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>
